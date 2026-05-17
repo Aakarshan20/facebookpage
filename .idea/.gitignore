@@ -1,0 +1,22 @@
+# === Maven 產出與編譯檔案 ===
+target/
+*.egg-info/
+
+# === IntelliJ IDEA 設定檔 ===
+.idea/
+/shelf/
+/workspace.xml
+
+# === 資料庫本機快取與 HTTP 請求 ===
+/dataSources/
+/dataSources.local.xml
+/httpRequests/
+
+# === 系統暫存與日誌檔案 ===
+*.log
+.DS_Store
+Thumbs.db
+
+# === 敏感設定檔 (選用) ===
+# 如果你之後想把含有 Token 的 properties 排除在 Git 之外，可以解開下一行的註解
+# /src/main/resources/application.properties
