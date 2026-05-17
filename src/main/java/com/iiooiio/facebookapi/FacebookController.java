@@ -1,4 +1,4 @@
-package com.example.facebookapi;
+package com.iiooiio.facebookapi;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,6 +22,27 @@ public class FacebookController {
             return "觸發失敗: " + e.getMessage();
         }
     }
+
+    @PostMapping("/publishWithPhotos")
+    public String triggerPublishWithPhotos() {
+        try {
+            facebookService.publishScheduledPostWithPhoto();
+            return "發送請求完成！請看 IDE 控制台日誌。";
+        } catch (Exception e) {
+            return "觸發失敗: " + e.getMessage();
+        }
+    }
+
+    @PostMapping("/publishWithLocalPhotos")
+    public String triggerPublishWithLocalPhotos() {
+        try {
+            facebookService.publishScheduledPostWithLocalPhoto();
+            return "發送請求完成！請看 IDE 控制台日誌。";
+        } catch (Exception e) {
+            return "觸發失敗: " + e.getMessage();
+        }
+    }
+
     @PostMapping("/scheduledList")
     public String scheduledList() {
         try {
