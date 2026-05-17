@@ -1,0 +1,18 @@
+# === Maven 產出與編譯檔案 ===
+target/
+*.egg-info/
+
+# === IntelliJ IDEA 設定檔 ===
+.idea/
+/shelf/
+/workspace.xml
+
+# === 資料庫本機快取與 HTTP 請求 ===
+/dataSources/
+/dataSources.local.xml
+/httpRequests/
+
+# === 系統暫存與日誌檔案 ===
+*.log
+.DS_Store
+Thumbs.db
