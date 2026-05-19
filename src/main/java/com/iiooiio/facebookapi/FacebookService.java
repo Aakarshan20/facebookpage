@@ -1,5 +1,7 @@
 package com.iiooiio.facebookapi;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
@@ -12,6 +14,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 
@@ -28,26 +31,27 @@ public class FacebookService  {
     @Value("${facebook.page-access-token}")
     private String pageAccessToken;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-
+    /**
+     * 手動單獨觸發本地圖文上傳排程測試 (已修正換行符號為 \n)
+     */
     public void publishScheduledPostWithLocalPhoto() {
         try {
-            LocalDateTime localDateTime = LocalDateTime.of(2026, 5, 17, 22, 0, 0);
+            LocalDateTime localDateTime = LocalDateTime.of(2026, 5, 24, 14, 0, 0);
             long unixTimestamp = localDateTime.atZone(ZoneId.of("Asia/Taipei")).toEpochSecond();
 
-            // 【改進 1】傳送實體檔案，params 的泛型必須改為 Object 才能裝 Resource 物件
             MultiValueMap<String, Object> params = new LinkedMultiValueMap<>();
-            params.add("caption", "這是透過 Java 直接上傳本地檔案的排程貼文！📸2");
+            // 修正點：將 \\n 改為 \n 才能在臉書上正確呈現換行
+            params.add("caption", "下午茶就是......\n\n睡到下午才來喝! ☕ \n#悠閒 #睡過頭 #財富自由");
 
-            // 【改進 2】指定你本地硬碟的圖片路徑
-            Resource imageFile = new FileSystemResource("C:\\Users\\Tom\\Desktop\\梗圖系列\\0.jpg");
-            params.add("source", imageFile); // 注意：上傳二進位檔時，參數名稱叫 "source"，不是 "url"
+            Resource imageFile = new FileSystemResource("C:\\Users\\Tom\\Downloads\\Gemini_Generated_Image_kwsspfkwsspfkwss(1).png");
+            params.add("source", imageFile);
 
             params.add("published", "false");
             params.add("scheduled_publish_time", String.valueOf(unixTimestamp));
             params.add("access_token", pageAccessToken);
 
-            // 【改進 3】Header 必須改為 MULTIPART_FORM_DATA 格式
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
@@ -65,42 +69,156 @@ public class FacebookService  {
         }
     }
 
+    /**
+     * 自動接龍算法：查詢後台排程時間，並精確計算下一棒時間點
+     */
+    public long calculateNextSlot() {
+        long targetTimestamp;
+
+        try {
+            String url = String.format(
+                    "https://graph.facebook.com/v20.0/%s/scheduled_posts?fields=scheduled_publish_time&access_token=%s",
+                    pageId, pageAccessToken
+            );
+
+            System.out.println("🔍 正在查詢 FB 後台現有排程以計算接龍時間...");
+            String jsonResponse = restTemplate.getForObject(url, String.class);
+
+            JsonNode root = objectMapper.readTree(jsonResponse);
+            JsonNode dataArray = root.get("data");
+
+            long latestTimestamp = 0;
+
+            if (dataArray != null && dataArray.isArray() && dataArray.size() > 0) {
+                for (JsonNode post : dataArray) {
+                    if (post.has("scheduled_publish_time")) {
+                        long postTime = post.get("scheduled_publish_time").asLong();
+                        if (postTime > latestTimestamp) {
+                            latestTimestamp = postTime;
+                        }
+                    }
+                }
+            }
+
+            if (latestTimestamp > 0) {
+                targetTimestamp = latestTimestamp + 86400; // 往後推 24 小時
+
+                LocalDateTime nextTimeStr = LocalDateTime.ofInstant(Instant.ofEpochSecond(targetTimestamp), ZoneId.of("Asia/Taipei"));
+                System.out.println("📌 發現既有排程！將承接最後一篇，排程時間設定為 (台北時間): " + nextTimeStr);
+
+            } else {
+                LocalDateTime nowPlus24Hours = LocalDateTime.now(ZoneId.of("Asia/Taipei")).plusHours(24);
+                targetTimestamp = nowPlus24Hours.atZone(ZoneId.of("Asia/Taipei")).toEpochSecond();
+
+                System.out.println("📌 目前後台無既有排程。排程時間設定為 (現在+24小時): " + nowPlus24Hours);
+            }
+
+            return targetTimestamp;
+
+        } catch (Exception e) {
+            System.err.println("❌ 計算接龍時間發生異常，降級改用【現在時間 + 24小時】保底");
+            e.printStackTrace();
+
+            return LocalDateTime.now(ZoneId.of("Asia/Taipei")).plusHours(24)
+                    .atZone(ZoneId.of("Asia/Taipei")).toEpochSecond();
+        }
+    }
+
+    /**
+     * 🤖 專屬機器人的終極完美接龍方法 (動態支援 txt 內文傳入)
+     * 注意：這裡加入了 throws Exception，確保失敗時不會把 todo 資料夾移到 done
+     */
+    public void publishPerfectScheduledPostWithCaption(String fileAbsolutePath, String caption) throws Exception {
+        try {
+            // 1. 算出最新接龍時間戳記
+            long nextScheduledTimestamp = calculateNextSlot();
+
+            // 2. STEP 1: 直接上傳本地圖片到 /photos 取得隱藏素材 ID
+            MultiValueMap<String, Object> photoParams = new LinkedMultiValueMap<>();
+            Resource imageFile = new FileSystemResource(fileAbsolutePath);
+            photoParams.add("source", imageFile);
+            photoParams.add("published", "false");
+            photoParams.add("access_token", pageAccessToken);
+
+            HttpHeaders photoHeaders = new HttpHeaders();
+            photoHeaders.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+            HttpEntity<MultiValueMap<String, Object>> photoEntity = new HttpEntity<>(photoParams, photoHeaders);
+
+            System.out.println("【步驟 1】正在上傳實體圖檔至 Meta 伺服器...");
+            java.util.Map<String, Object> photoResponse = restTemplate.postForObject(
+                    "https://graph.facebook.com/v20.0/" + pageId + "/photos", photoEntity, java.util.Map.class);
+
+            if (photoResponse == null || !photoResponse.containsKey("id")) {
+                throw new RuntimeException("無法取得照片素材 ID，回應內容為空或異常。");
+            }
+
+            String photoId = (String) photoResponse.get("id");
+            System.out.println("【步驟 1】成功，取得照片素材 ID: " + photoId);
+
+            // 3. STEP 2: 用 photoId 去 /feed 建立標準排程貼文
+            MultiValueMap<String, String> feedParams = new LinkedMultiValueMap<>();
+
+            // 如果從 txt 讀出的內文為空，就採用預設罐頭文案
+            String finalMessage = (caption != null && !caption.trim().isEmpty()) ? caption : "Greta Chiu AI 生成藝術日常補完 🤖✨";
+            feedParams.add("message", finalMessage);
+
+            feedParams.add("published", "false");
+            feedParams.add("scheduled_publish_time", String.valueOf(nextScheduledTimestamp));
+            feedParams.add("attached_media[0]", "{\"media_fbid\":\"" + photoId + "\"}");
+            feedParams.add("access_token", pageAccessToken);
+
+            HttpHeaders feedHeaders = new HttpHeaders();
+            feedHeaders.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+
+            HttpEntity<MultiValueMap<String, String>> feedEntity = new HttpEntity<>(feedParams, feedHeaders);
+
+            System.out.println("【步驟 2】正在向 /feed 綁定照片並建立排程...");
+            String feedResponse = restTemplate.postForObject(
+                    "https://graph.facebook.com/v20.0/" + pageId + "/feed", feedEntity, String.class);
+
+            System.out.println("🎉 機器人自動接龍排程成功！Facebook API 回應: " + feedResponse);
+
+        } catch (Exception e) {
+            System.err.println("❌ 自動化排程流水線發生錯誤：");
+            e.printStackTrace();
+            // 關鍵點：一定要向上拋出錯誤，讓呼叫此方法的 BotService 能夠進 catch 區塊阻止移動檔案
+            throw e;
+        }
+    }
+
+    /**
+     * 保持向下相容：如果舊的 Controller 還有呼叫舊的無 caption 方法，自動導向預設內文
+     */
+    public void publishPerfectScheduledPost(String fileAbsolutePath) {
+        try {
+            publishPerfectScheduledPostWithCaption(fileAbsolutePath, null);
+        } catch (Exception e) {
+            System.err.println("調用舊版完美發文方法出錯。");
+        }
+    }
 
     public void publishScheduledPostWithPhoto() {
         try {
-            // 1. 設定預計發文時間（台北時間 2026-06-01 13:00:00）
             LocalDateTime localDateTime = LocalDateTime.of(2026, 6, 1, 14, 0, 0);
             long unixTimestamp = localDateTime.atZone(ZoneId.of("Asia/Taipei")).toEpochSecond();
 
-            // 2. 準備請求參數
             MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-
-            // 【注意】發送到 /photos 端點時，內文參數必須改成 "caption"
             params.add("caption", "這是透過 Java RestTemplate 自動排程發送的【圖文貼文】！📸");
-
-            // 放入圖片的公開網路網址 (FB 伺服器必須能直接存取這個網址)
             params.add("url", "https://meee.com.tw/CwPV3Ly");
-
             params.add("published", "false");
             params.add("scheduled_publish_time", String.valueOf(unixTimestamp));
             params.add("access_token", pageAccessToken);
 
-            // 3. 設定 Header (指定為表單格式 application/x-www-form-urlencoded)
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
-            // 包裝成 HttpEntity
             HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<>(params, headers);
 
-            // 4. 發送 POST 請求
-            // 【關鍵】端點從 /feed 改成 /photos
             String url = "https://graph.facebook.com/v20.0/" + pageId + "/photos";
             System.out.println("正在發送【圖文排程】請求至 Facebook API...");
 
             String response = restTemplate.postForObject(url, requestEntity, String.class);
-
-            // 5. 印出結果
-            // 成功時會回傳 {"id": "照片ID", "post_id": "貼文ID"}
             System.out.println("Facebook API 回應內容: " + response);
 
         } catch (Exception e) {
@@ -109,35 +227,26 @@ public class FacebookService  {
         }
     }
 
-
     public void publishScheduledPost() {
         try {
-
-            // 2. 設定預計發文時間
             LocalDateTime localDateTime = LocalDateTime.of(2026, 6, 1, 13, 0, 0);
             long unixTimestamp = localDateTime.atZone(ZoneId.of("Asia/Taipei")).toEpochSecond();
 
-            // 3. 準備請求參數 (RestTemplate 傳送表單資料要用 MultiValueMap)
             MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
             params.add("message", "這是透過 Java RestTemplate 自動排程發送的測試貼文！2");
             params.add("published", "false");
             params.add("scheduled_publish_time", String.valueOf(unixTimestamp));
             params.add("access_token", pageAccessToken);
 
-            // 4. 設定 Header (指定為表單格式 application/x-www-form-urlencoded)
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
-            // 包裝成 HttpEntity
             HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<>(params, headers);
 
-            // 5. 發送 POST 請求
             String url = "https://graph.facebook.com/v20.0/" + pageId + "/feed";
             System.out.println("正在透過 RestTemplate 發送排程請求至 Facebook API...");
 
             String response = restTemplate.postForObject(url, requestEntity, String.class);
-
-            // 6. 印出結果
             System.out.println("Facebook API 回應內容: " + response);
 
         } catch (Exception e) {
@@ -148,8 +257,6 @@ public class FacebookService  {
 
     public void getScheduledPosts() {
         try {
-            // 1. 組裝查詢的 URL，指定要撈取的欄位（如：id, message, scheduled_publish_time）
-            // 網址格式為: https://graph.facebook.com/v20.0/{page_id}/scheduled_posts
             System.out.println("pageId:" + pageId);
             System.out.println("pageAccessToken:" + pageAccessToken);
             String url = String.format(
@@ -159,10 +266,8 @@ public class FacebookService  {
 
             System.out.println("正在發送請求查詢已排程文章...");
 
-            // 2. 使用 RestTemplate 發送 GET 請求
             String response = restTemplate.getForObject(url, String.class);
 
-            // 3. 印出回傳結果
             System.out.println("====== 目前已排程文章清單 ======");
             System.out.println(response);
             System.out.println("================================");

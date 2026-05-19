@@ -51,7 +51,7 @@ facebook.page-access-token=你的_PAGE_ACCESS_TOKEN
     PowerShell 測試指令：
     PowerShell
 
-    Invoke-RestMethod -Method Get -Uri http://localhost:8080/api/fb/scheduled
+    Invoke-RestMethod -Method Get -Uri http://localhost:8080/api/fb/scheduledList
 
     Git Bash / Linux cURL 測試指令：
     Bash

@@ -1,6 +1,7 @@
 package com.iiooiio.facebookapi;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -33,7 +34,7 @@ public class FacebookController {
         }
     }
 
-    @PostMapping("/publishWithLocalPhotos")
+    @GetMapping("/publishWithLocalPhotos")
     public String triggerPublishWithLocalPhotos() {
         try {
             facebookService.publishScheduledPostWithLocalPhoto();
@@ -43,7 +44,7 @@ public class FacebookController {
         }
     }
 
-    @PostMapping("/scheduledList")
+    @GetMapping ("/scheduledList")
     public String scheduledList() {
         try {
             facebookService.getScheduledPosts();
