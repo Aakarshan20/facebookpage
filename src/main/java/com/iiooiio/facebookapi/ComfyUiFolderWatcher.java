@@ -8,14 +8,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 @Component
-public class ComfyUiFolderWatcher implements CommandLineRunner {
+public class ComfyUiFolderWatcher { //implements CommandLineRunner {
 
     @Autowired
     private FacebookService facebookService;
 
     // 設定你要監聽的 ComfyUI 產圖目錄
     private final String WATCH_PATH = "C:/data/ComfyUI/output";
-
+    /*
     @Override
     public void run(String... args) throws Exception {
         System.out.println("🚀 啟動 ComfyUI 檔案監聽服務，目標目錄: " + WATCH_PATH);
@@ -56,4 +56,6 @@ public class ComfyUiFolderWatcher implements CommandLineRunner {
             }
         });
     }
+
+     */
 }

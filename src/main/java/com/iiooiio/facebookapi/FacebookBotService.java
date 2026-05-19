@@ -12,6 +12,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -22,7 +25,6 @@ public class FacebookBotService implements CommandLineRunner {
     @Autowired
     private FacebookService facebookService;
 
-    // ✨ 透過 @Value 動態讀取 properties 設定，若讀不到則以右側路徑保底
     @Value("${facebook.bot.todo-dir:./workspace/todo}")
     private String todoDir;
 
@@ -32,13 +34,23 @@ public class FacebookBotService implements CommandLineRunner {
     // 建立單執行緒的排程執行器
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
+    // ✨ 宣告五個隨機預設文案池（你可以自由修改這裡的文字，支援 \n 換行）
+    private final List<String> defaultCaptions = Arrays.asList(
+            "日常補完 🤖✨\n\n每天都要來點不一樣的靈感刺激！ #上班族日常",
+            "今日份的快樂已送達 ☕\n\n生活再忙，也別忘了笑一笑。 #日常系列",
+            "看來今天又是一個適合放空的日子 🎨✨\n\n #美好的一天",
+            "隨機捕捉一隻出沒在虛擬世界的 美少女 🤖\n\n#AIArt #酷妹日常",
+            "下午茶時間過後... 靈感突然噴發的產物 🔮\n\n不管怎樣先發文再說！ #發文挑戰"
+    );
+
+    private final Random random = new Random();
+
     @Override
     public void run(String... args) throws Exception {
         System.out.println("🤖 Facebook 自動發文機器人已啟動，每 20 秒監聽一次資料夾...");
         System.out.println("📂 目前監聽 todo 路徑: " + todoDir);
         System.out.println("📂 目前歸檔 done 路徑: " + doneDir);
 
-        // 專案啟動後，延遲 5 秒開始執行，之後每隔 20 秒執行一次
         scheduler.scheduleWithFixedDelay(this::watchAndPublish, 5, 20, TimeUnit.SECONDS);
     }
 
@@ -54,13 +66,11 @@ public class FacebookBotService implements CommandLineRunner {
             File[] pngFiles = todoFolder.listFiles((dir, name) -> name.toLowerCase().endsWith(".png"));
 
             if (pngFiles == null || pngFiles.length == 0) {
-                // 資料夾為空，安靜地結束，等待下個 20 秒
                 return;
             }
 
             System.out.println("🔍 偵測到 todo 資料夾有 " + pngFiles.length + " 個待處理圖片...");
 
-            // 每次循環只處理「第一張」圖片，確保按照排程列表依序接龍
             File pngFile = pngFiles[0];
             String fileNameWithoutExt = getFileNameWithoutExtension(pngFile);
 
@@ -73,18 +83,23 @@ public class FacebookBotService implements CommandLineRunner {
                 return;
             }
 
-            // 2. 讀取同名 .txt 檔案取得發文文案
+            // 2. 讀取同名 .txt 檔案取得發文文案，若無則從 List 隨機挑選
             String caption = "";
             if (txtFile.exists() && txtFile.isFile()) {
                 try {
                     byte[] encoded = Files.readAllBytes(txtFile.toPath());
                     caption = new String(encoded, StandardCharsets.UTF_8);
-                    System.out.println("📖 成功讀取文案 [" + txtFile.getName() + "]");
+                    System.out.println("📖 成功讀取本地文案 [" + txtFile.getName() + "]");
                 } catch (IOException e) {
-                    System.err.println("❌ 讀取文字檔失敗: " + txtFile.getName() + "，將使用預設文案發送。");
+                    System.err.println("❌ 讀取文字檔失敗: " + txtFile.getName() + "，將改用隨機預設文案。");
                 }
-            } else {
-                System.out.println("⚠️ 未找到同名文字檔 [" + fileNameWithoutExt + ".txt]，將以無內文形式發佈。");
+            }
+
+            // ✨【關鍵改動】如果 txt 不存在或內容空空如也，觸發隨機保底機制
+            if (caption == null || caption.trim().isEmpty()) {
+                int randomIndex = random.nextInt(defaultCaptions.size());
+                caption = defaultCaptions.get(randomIndex);
+                System.out.println("🎲 未偵測到有效的 .txt 檔案，已自動隨機抽選第 " + (randomIndex + 1) + " 組預設文案。");
             }
 
             // 3. 呼叫終極接龍流水線
@@ -105,9 +120,6 @@ public class FacebookBotService implements CommandLineRunner {
         }
     }
 
-    /**
-     * 移除副檔名取得純檔名
-     */
     private String getFileNameWithoutExtension(File file) {
         String name = file.getName();
         int lastIndexOf = name.lastIndexOf(".");
@@ -117,18 +129,14 @@ public class FacebookBotService implements CommandLineRunner {
         return name.substring(0, lastIndexOf);
     }
 
-    /**
-     * 將檔案安全移動到 done 資料夾
-     */
     private void moveFileToDone(File sourceFile) {
         try {
             Path targetDir = Paths.get(doneDir);
             if (!Files.exists(targetDir)) {
-                Files.createDirectories(targetDir); // 如果 done 資料夾不存在就自動建立
+                Files.createDirectories(targetDir);
             }
 
             Path targetPath = targetDir.resolve(sourceFile.getName());
-            // 使用 REPLACE_EXISTING 確保安全覆蓋與移動
             Files.move(sourceFile.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             System.err.println("❌ 移動檔案失敗: " + sourceFile.getName());
@@ -136,13 +144,10 @@ public class FacebookBotService implements CommandLineRunner {
         }
     }
 
-    /**
-     * 檢查檔案是否還在被其他程序寫入中
-     */
     private boolean isFileLocked(File file) {
         long oldSize = file.length();
         try {
-            Thread.sleep(500); // 稍微等半秒鐘
+            Thread.sleep(500);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
