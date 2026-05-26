@@ -165,7 +165,9 @@ public class FacebookService  {
 
             feedParams.add("published", "false");
             feedParams.add("scheduled_publish_time", String.valueOf(nextScheduledTimestamp));
-            feedParams.add("attached_media[0]", "{\"media_fbid\":\"" + photoId + "\"}");
+            String attachedMediaJson = "[{\"media_fbid\":\"" + photoId + "\"}]";
+            feedParams.add("attached_media", attachedMediaJson);
+
             feedParams.add("access_token", pageAccessToken);
 
             HttpHeaders feedHeaders = new HttpHeaders();
