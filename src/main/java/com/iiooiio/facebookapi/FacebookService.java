@@ -17,6 +17,10 @@ import org.springframework.web.client.RestTemplate;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class FacebookService  {
@@ -65,6 +69,74 @@ public class FacebookService  {
 
         } catch (Exception e) {
             System.err.println("呼叫 Facebook API 發生錯誤：");
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 按照 Facebook 官方文件，發文至粉絲專頁動態牆（含圖片）
+     * 步驟 1：上傳圖片至 /photos (published=false, temporary=true)
+     * 步驟 2：POST /page_id/feed 帶入 photo_id
+     */
+    public void publishPostToFeedWithPhoto(String message, String imagePath) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+
+            // ========== 步驟 1：上傳圖片 (修正參數) ==========
+            System.out.println("【步驟 1】正在上傳圖片...");
+
+            MultiValueMap<String, Object> uploadParams = new LinkedMultiValueMap<>();
+            uploadParams.add("source", new FileSystemResource(imagePath));
+            uploadParams.add("published", "false"); // 🌟 保持 false，不單獨為圖片發一篇文
+            // uploadParams.add("temporary", "true"); // ❌ 拿掉這行！不要設為暫存，避免觸發 Meta 的隱私保護邏輯
+            uploadParams.add("access_token", pageAccessToken);
+
+            HttpHeaders uploadHeaders = new HttpHeaders();
+            uploadHeaders.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+            HttpEntity<MultiValueMap<String, Object>> uploadEntity =
+                    new HttpEntity<>(uploadParams, uploadHeaders);
+
+            String uploadUrl = "https://graph.facebook.com/v25.0/" + pageId + "/photos";
+            String uploadResponse = restTemplate.postForObject(uploadUrl, uploadEntity, String.class);
+
+            JsonNode uploadJson = mapper.readTree(uploadResponse);
+            String photoId = uploadJson.get("id").asText();
+            System.out.println("【步驟 1】✅ 圖片上傳成功，photo_id: " + photoId);
+
+            // ========== 步驟 2：發文到動態牆 (追加強迫公開參數) ==========
+            System.out.println("【步驟 2】正在發文至動態牆...");
+
+            String feedUrl = "https://graph.facebook.com/v25.0/" + pageId + "/feed";
+
+            HttpHeaders feedHeaders = new HttpHeaders();
+            feedHeaders.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+
+            Map<String, String> mediaItem = new HashMap<>();
+            mediaItem.put("media_fbid", photoId);
+
+            List<Map<String, String>> attachedMedia = new ArrayList<>();
+            attachedMedia.add(mediaItem);
+
+            String attachedMediaJson = mapper.writeValueAsString(attachedMedia);
+
+            MultiValueMap<String, String> feedBody = new LinkedMultiValueMap<>();
+            feedBody.add("message", message);
+            feedBody.add("attached_media", attachedMediaJson);
+            // 🌟 關鍵修正：這裡必須明確加上 published=true，強迫 Meta 將這篇貼文推上公眾動態牆！
+            feedBody.add("published", "true");
+            feedBody.add("access_token", pageAccessToken);
+
+            HttpEntity<MultiValueMap<String, String>> feedEntity = new HttpEntity<>(feedBody, feedHeaders);
+
+            String feedResponse = restTemplate.postForObject(feedUrl, feedEntity, String.class);
+
+            JsonNode feedJson = mapper.readTree(feedResponse);
+            String postId = feedJson.get("id").asText();
+            System.out.println("【步驟 2】✅ 動態牆發文成功，貼文 ID: " + postId);
+
+        } catch (Exception e) {
+            System.err.println("❌ 發文失敗：");
             e.printStackTrace();
         }
     }

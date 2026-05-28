@@ -44,6 +44,19 @@ public class FacebookController {
         }
     }
 
+    @GetMapping("/publishImmediatePostWithLocalPhoto")
+    public String publishImmediatePostWithLocalPhoto() {
+        try {
+            facebookService.publishPostToFeedWithPhoto(
+                    "happy days!",
+                    "C:\\Users\\test_.png"
+            );;
+            return "發送請求完成！請看 IDE 控制台日誌。";
+        } catch (Exception e) {
+            return "觸發失敗: " + e.getMessage();
+        }
+    }
+
     @GetMapping ("/scheduledList")
     public String scheduledList() {
         try {
