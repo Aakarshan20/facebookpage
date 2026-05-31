@@ -178,6 +178,22 @@ public class FacebookService  {
                 LocalDateTime nextTimeStr = LocalDateTime.ofInstant(Instant.ofEpochSecond(targetTimestamp), ZoneId.of("Asia/Taipei"));
                 System.out.println("📌 發現既有排程！將承接最後一篇，排程時間設定為 (台北時間): " + nextTimeStr);
 
+                long now = System.currentTimeMillis() / 1000;
+                long minAllowed = now + 600; // 最早：10 分鐘後
+                long maxAllowed = now + (29L * 24 * 60 * 60); // 最晚：29 天後
+
+                // 如果計算出的時間已過期或太近，從現在起重新排
+                if (targetTimestamp < minAllowed) {
+                    System.out.println("⚠️ 排程時間已過期，重設為現在起 10 分鐘後");
+                    targetTimestamp = minAllowed;
+                }
+
+                // 如果超過 29 天，截斷
+                if (targetTimestamp > maxAllowed) {
+                    System.out.println("⚠️ 排程時間超過上限，截斷為 29 天後");
+                    targetTimestamp = 0;
+                }
+
             } else {
                 LocalDateTime nowPlus24Hours = LocalDateTime.now(ZoneId.of("Asia/Taipei")).plusHours(24);
                 targetTimestamp = nowPlus24Hours.atZone(ZoneId.of("Asia/Taipei")).toEpochSecond();
@@ -204,6 +220,10 @@ public class FacebookService  {
         try {
             // 1. 算出最新接龍時間戳記
             long nextScheduledTimestamp = calculateNextSlot();
+
+            if(nextScheduledTimestamp == 0) {
+                throw new RuntimeException("時間已超過29天 隔天再試");
+            }
 
             // 2. STEP 1: 直接上傳本地圖片到 /photos 取得隱藏素材 ID
             MultiValueMap<String, Object> photoParams = new LinkedMultiValueMap<>();
@@ -232,7 +252,7 @@ public class FacebookService  {
             MultiValueMap<String, String> feedParams = new LinkedMultiValueMap<>();
 
             // 如果從 txt 讀出的內文為空，就採用預設罐頭文案
-            String finalMessage = (caption != null && !caption.trim().isEmpty()) ? caption : "Greta Chiu AI 生成藝術日常補完 🤖✨";
+            String finalMessage = (caption != null && !caption.trim().isEmpty()) ? caption : "日常補完 🤖✨";
             feedParams.add("message", finalMessage);
 
             feedParams.add("published", "false");
