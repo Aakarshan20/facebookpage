@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
@@ -31,10 +32,8 @@ public class FacebookBotService implements CommandLineRunner {
     @Value("${facebook.bot.done-dir:./workspace/done}")
     private String doneDir;
 
-    // 建立單執行緒的排程執行器
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
-    // ✨ 宣告五個隨機預設文案池（你可以自由修改這裡的文字，支援 \n 換行）
     private final List<String> defaultCaptions = Arrays.asList(
             "日常補完 🤖✨ 每天都要來點不一樣的靈感刺激！ #上班族日常",
             "今日份的快樂已送達 ☕ 生活再忙，也別忘了笑一笑。 #日常系列",
@@ -50,7 +49,6 @@ public class FacebookBotService implements CommandLineRunner {
         System.out.println("🤖 Facebook 自動發文機器人已啟動，每 20 秒監聽一次資料夾...");
         System.out.println("📂 目前監聽 todo 路徑: " + todoDir);
         System.out.println("📂 目前歸檔 done 路徑: " + doneDir);
-
         scheduler.scheduleWithFixedDelay(this::watchAndPublish, 5, 20, TimeUnit.SECONDS);
     }
 
@@ -62,9 +60,64 @@ public class FacebookBotService implements CommandLineRunner {
                 return;
             }
 
-            // 1. 尋找資料夾底下的所有 .png 檔案
-            File[] pngFiles = todoFolder.listFiles((dir, name) -> name.toLowerCase().endsWith(".png"));
+            // ========== 模式一：優先處理子資料夾（多圖貼文）==========
+            File[] subFolders = todoFolder.listFiles(File::isDirectory);
+            if (subFolders != null && subFolders.length > 0) {
+                File subFolder = subFolders[0];
+                System.out.println("📂 偵測到子資料夾: " + subFolder.getName() + "，進入多圖貼文模式...");
 
+                // 取得資料夾內所有 png
+                File[] pngFiles = subFolder.listFiles((dir, name) -> name.toLowerCase().endsWith(".png"));
+                if (pngFiles == null || pngFiles.length == 0) {
+                    System.out.println("⚠️ 資料夾 " + subFolder.getName() + " 內無 PNG 檔案，跳過並移至 done。");
+                    moveFileToDone(subFolder);
+                    return;
+                }
+
+                // 檢查是否有圖片還在寫入
+                for (File png : pngFiles) {
+                    if (isFileLocked(png)) {
+                        System.out.println("⏳ 檔案 " + png.getName() + " 還在寫入中，跳過本次處理。");
+                        return;
+                    }
+                }
+
+                // 取得 txt 文案（不限制檔名，直接取第一個 txt）
+                String caption = "";
+                File[] txtFiles = subFolder.listFiles((dir, name) -> name.toLowerCase().endsWith(".txt"));
+                if (txtFiles != null && txtFiles.length > 0) {
+                    try {
+                        byte[] encoded = Files.readAllBytes(txtFiles[0].toPath());
+                        caption = new String(encoded, StandardCharsets.UTF_8);
+                        System.out.println("📖 成功讀取資料夾文案 [" + txtFiles[0].getName() + "]");
+                    } catch (IOException e) {
+                        System.err.println("❌ 讀取文字檔失敗，將改用隨機預設文案。");
+                    }
+                }
+
+                if (caption == null || caption.trim().isEmpty()) {
+                    int randomIndex = random.nextInt(defaultCaptions.size());
+                    caption = defaultCaptions.get(randomIndex);
+                    System.out.println("🎲 未偵測到有效的 .txt，已自動隨機抽選第 " + (randomIndex + 1) + " 組預設文案。");
+                }
+
+                // 組成圖片路徑清單
+                List<String> imagePaths = new ArrayList<>();
+                for (File png : pngFiles) {
+                    imagePaths.add(png.getAbsolutePath());
+                }
+
+                System.out.println("🚀 準備發送資料夾 [" + subFolder.getName() + "] 共 " + imagePaths.size() + " 張圖至 Facebook 排程...");
+                facebookService.publishScheduledPostWithMultiplePhotos(imagePaths, caption);
+
+                // 整個資料夾移至 done
+                moveFileToDone(subFolder);
+                System.out.println("✅ 資料夾 [" + subFolder.getName() + "] 處理完畢，已移至已處理區。");
+                return;
+            }
+
+            // ========== 模式二：處理單一 PNG（原本邏輯不動）==========
+            File[] pngFiles = todoFolder.listFiles((dir, name) -> name.toLowerCase().endsWith(".png"));
             if (pngFiles == null || pngFiles.length == 0) {
                 return;
             }
@@ -73,17 +126,13 @@ public class FacebookBotService implements CommandLineRunner {
 
             File pngFile = pngFiles[0];
             String fileNameWithoutExt = getFileNameWithoutExtension(pngFile);
-
-            // 尋找同名的 .txt 檔案
             File txtFile = new File(todoDir + File.separator + fileNameWithoutExt + ".txt");
 
-            // 安全機制：檢查檔案是否正在被 ComfyUI 寫入
             if (isFileLocked(pngFile)) {
                 System.out.println("⏳ 檔案 " + pngFile.getName() + " 似乎還在寫入中，跳過本次處理。");
                 return;
             }
 
-            // 2. 讀取同名 .txt 檔案取得發文文案，若無則從 List 隨機挑選
             String caption = "";
             if (txtFile.exists() && txtFile.isFile()) {
                 try {
@@ -95,23 +144,19 @@ public class FacebookBotService implements CommandLineRunner {
                 }
             }
 
-            // ✨【關鍵改動】如果 txt 不存在或內容空空如也，觸發隨機保底機制
             if (caption == null || caption.trim().isEmpty()) {
                 int randomIndex = random.nextInt(defaultCaptions.size());
                 caption = defaultCaptions.get(randomIndex);
                 System.out.println("🎲 未偵測到有效的 .txt 檔案，已自動隨機抽選第 " + (randomIndex + 1) + " 組預設文案。");
             }
 
-            // 3. 呼叫終極接龍流水線
             System.out.println("🚀 準備發送圖片 " + pngFile.getName() + " 至 Facebook 排程...");
             facebookService.publishPerfectScheduledPostWithCaption(pngFile.getAbsolutePath(), caption);
 
-            // 4. 發送成功後，將檔案移至 done 資料夾
             moveFileToDone(pngFile);
             if (txtFile.exists()) {
                 moveFileToDone(txtFile);
             }
-
             System.out.println("✅ " + fileNameWithoutExt + " 組件處理完畢，已移至已處理區。");
 
         } catch (Exception e) {
@@ -123,9 +168,7 @@ public class FacebookBotService implements CommandLineRunner {
     private String getFileNameWithoutExtension(File file) {
         String name = file.getName();
         int lastIndexOf = name.lastIndexOf(".");
-        if (lastIndexOf == -1) {
-            return name;
-        }
+        if (lastIndexOf == -1) return name;
         return name.substring(0, lastIndexOf);
     }
 
@@ -135,7 +178,6 @@ public class FacebookBotService implements CommandLineRunner {
             if (!Files.exists(targetDir)) {
                 Files.createDirectories(targetDir);
             }
-
             Path targetPath = targetDir.resolve(sourceFile.getName());
             Files.move(sourceFile.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
