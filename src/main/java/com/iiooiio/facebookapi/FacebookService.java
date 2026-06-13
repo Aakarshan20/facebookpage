@@ -303,6 +303,34 @@ public class FacebookService {
         }
     }
 
+    public long getLatestScheduledTimestamp() {
+        try {
+            String url = String.format(
+                    "https://graph.facebook.com/v20.0/%s/scheduled_posts?fields=scheduled_publish_time&access_token=%s",
+                    pageId, pageAccessToken
+            );
+            String jsonResponse = restTemplate.getForObject(url, String.class);
+            JsonNode root = objectMapper.readTree(jsonResponse);
+            JsonNode dataArray = root.get("data");
+
+            long latestTimestamp = 0;
+            if (dataArray != null && dataArray.isArray()) {
+                for (JsonNode post : dataArray) {
+                    if (post.has("scheduled_publish_time")) {
+                        long postTime = post.get("scheduled_publish_time").asLong();
+                        if (postTime > latestTimestamp) latestTimestamp = postTime;
+                    }
+                }
+            }
+            return latestTimestamp;
+
+        } catch (Exception e) {
+            System.err.println("❌ 取得最後排程時間失敗：" + e.getMessage());
+            // fallback：用現在時間當基準
+            return System.currentTimeMillis() / 1000;
+        }
+    }
+
     public void publishPerfectScheduledPost(String fileAbsolutePath) {
         try {
             publishPerfectScheduledPostWithCaption(fileAbsolutePath, null);
