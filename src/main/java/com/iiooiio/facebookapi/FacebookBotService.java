@@ -67,27 +67,43 @@ public class FacebookBotService implements CommandLineRunner {
 
     private final Random random = new Random();
 
+    private void scheduleNextRun(long delaySeconds) {
+        scheduler.schedule(this::runOnce, delaySeconds, TimeUnit.SECONDS);
+    }
+
+    private void runOnce() {
+        watchAndPublish();
+        // 執行完後決定下次什麼時候再跑
+        long nextDelay = readResumeDelaySeconds();
+        if (nextDelay > 0) {
+            LocalDateTime resumeTime = LocalDateTime.now(ZoneId.of("Asia/Taipei")).plusSeconds(nextDelay);
+            System.out.println("⏸️ 下次執行時間: " + resumeTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                    + "（等待 " + nextDelay + " 秒）");
+            scheduleNextRun(nextDelay);
+        } else {
+            // 沒有等待時間，20秒後再跑
+            scheduleNextRun(20);
+        }
+    }
+
+
     @Override
     public void run(String... args) throws Exception {
         System.out.println("🤖 Facebook 自動發文機器人已啟動，每 20 秒監聽一次資料夾...");
         System.out.println("📂 目前監聽 todo 路徑: " + todoDir);
         System.out.println("📂 目前歸檔 done 路徑: " + doneDir);
 
-        // ===== 啟動時讀取 record.txt 決定初始延遲 =====
         long initialDelay = readResumeDelaySeconds();
-
         if (initialDelay > 0) {
             LocalDateTime resumeTime = LocalDateTime.now(ZoneId.of("Asia/Taipei")).plusSeconds(initialDelay);
             System.out.println("📋 偵測到 record.txt，排程暫停中...");
-            System.out.println("⏳ 將於 " + initialDelay + " 秒後恢復掃描（預計恢復時間: "
+            System.out.println("⏳ 將於 " + initialDelay + " 秒後恢復（預計: "
                     + resumeTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "）");
+            scheduleNextRun(initialDelay);
         } else {
             System.out.println("📋 無待機紀錄，20 秒後開始正常掃描。");
-            initialDelay = 20;
+            scheduleNextRun(20);
         }
-
-
-        scheduler.scheduleWithFixedDelay(this::watchAndPublish, 5, 20, TimeUnit.SECONDS);
     }
 
     /**
@@ -98,25 +114,31 @@ public class FacebookBotService implements CommandLineRunner {
     private long readResumeDelaySeconds() {
         try {
             File recordFile = new File(recordFilePath);
-            System.out.println("📁 record.txt 實際位置: " + recordFile.getAbsolutePath()); // ← 加這行
             if (!recordFile.exists() || recordFile.length() == 0) return 0;
 
             String content = new String(Files.readAllBytes(recordFile.toPath()), StandardCharsets.UTF_8).trim();
             if (content.isEmpty()) return 0;
 
-            LocalDateTime resumeTime = LocalDateTime.parse(content,
-                    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-            LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Taipei"));
+            long resumeTimestamp = Long.parseLong(content);
+            long now = System.currentTimeMillis() / 1000;
+            long diff = resumeTimestamp - now;
 
-            if (now.isBefore(resumeTime)) {
-                long seconds = java.time.Duration.between(now, resumeTime).getSeconds();
-                System.out.println("📋 record.txt 解鎖時間: " + content + "，剩餘等待: " + seconds + " 秒");
-                return seconds;
+            LocalDateTime recordTime = LocalDateTime.ofInstant(
+                    Instant.ofEpochSecond(resumeTimestamp), ZoneId.of("Asia/Taipei"));
+            System.out.println("📋 record.txt 解鎖時間: " + recordTime);
+            System.out.println("📋 與現在相差: " + diff + " 秒");
+
+            if (diff > 0) {
+                // ✅ 只要大於 0 就不能發文，sleep 到那一秒
+                System.out.println("⏳ 尚未到解鎖時間，將 sleep " + diff + " 秒後再發文");
+                return diff;
             } else {
-                System.out.println("📋 record.txt 解鎖時間已過，清除紀錄正常啟動。");
+                // diff <= 0，時間已到，可以發文
+                System.out.println("✅ 已到解鎖時間，開始發文");
                 clearRecordFile();
                 return 0;
             }
+
         } catch (Exception e) {
             System.err.println("⚠️ 讀取 record.txt 失敗，忽略並正常啟動：" + e.getMessage());
             return 0;
@@ -131,26 +153,19 @@ public class FacebookBotService implements CommandLineRunner {
     public void writeRecordFile(long latestScheduledTimestamp) {
         try {
             File recordFile = new File(recordFilePath);
-            System.out.println("📁 record.txt 實際位置: " + recordFile.getAbsolutePath()); // ← 加這行
             if (!recordFile.getParentFile().exists()) {
                 recordFile.getParentFile().mkdirs();
             }
 
-            // 解鎖時間 = FB最後排程時間 + 29天
-            long resumeUnix = latestScheduledTimestamp + (29L * 24 * 60 * 60);
-            LocalDateTime resumeTime = LocalDateTime.ofInstant(
-                    Instant.ofEpochSecond(resumeUnix), ZoneId.of("Asia/Taipei"));
+            // 解鎖時間 = FB最遠排程時間 - 28天
+            long resumeTimestamp = latestScheduledTimestamp - (28L * 24 * 60 * 60);
 
-            String content = resumeTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            String content = String.valueOf(resumeTimestamp);
             Files.write(recordFile.toPath(), content.getBytes(StandardCharsets.UTF_8));
 
-            System.out.println("📝 已寫入 record.txt，解鎖時間 (台北時間): " + content);
-
-            // 計算距離現在多少秒
-            long now = System.currentTimeMillis() / 1000;
-            long waitSeconds = resumeUnix - now;
-            System.out.println("⏳ 預計等待: " + waitSeconds + " 秒（約 "
-                    + (waitSeconds / 3600) + " 小時）後可繼續發文");
+            LocalDateTime resumeTime = LocalDateTime.ofInstant(
+                    Instant.ofEpochSecond(resumeTimestamp), ZoneId.of("Asia/Taipei"));
+            System.out.println("📝 已寫入 record.txt，解鎖時間: " + resumeTime);
 
         } catch (IOException e) {
             System.err.println("❌ 寫入 record.txt 失敗：" + e.getMessage());
